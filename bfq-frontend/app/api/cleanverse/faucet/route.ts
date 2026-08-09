@@ -90,9 +90,12 @@ export async function POST(request: Request) {
     // 2. Direct On-Chain Execution (send native MON gas + try AUSDC transfer/mint)
     const privateKey = (
       process.env.DEPLOYER_PRIVATE_KEY ||
-      process.env.CLEANVERSE_VALIDATOR_OWNER_PRIVATE_KEY ||
-      "0x6443b3aa83e58eb33725e9aa4793fb6f764fd4a5671a3689103b7d1d69e2de65"
-    ) as `0x${string}`;
+      process.env.CLEANVERSE_VALIDATOR_OWNER_PRIVATE_KEY
+    ) as `0x${string}` | undefined;
+
+    if (!privateKey) {
+      return NextResponse.json({ error: "Missing DEPLOYER_PRIVATE_KEY environment variable" }, { status: 500 });
+    }
 
     const account = privateKeyToAccount(privateKey);
     const walletClient = createWalletClient({
