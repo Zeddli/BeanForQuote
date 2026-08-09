@@ -223,3 +223,22 @@ forge test
 cast call 0x1c5fa313efc3868e0396532f92c163c02c148d6d "hasRole(address,bytes32)(bool)" 0x9703f29Ab27a1D72502cfeDFc739d26aA41abF88 $(cast keccak "BUYER_ROLE") --rpc-url https://testnet-rpc.monad.xyz
 # Returns: true
 ```
+
+---
+
+### Step 7: Deploy Frontend to Netlify
+
+1. Connect your GitHub repository to **[Netlify](https://app.netlify.com)**.
+2. Netlify will auto-detect the root `netlify.toml` configuration:
+   - **Base directory**: `bfq-frontend`
+   - **Build command**: `npm run build`
+   - **Publish directory**: `.next`
+3. Under **Site Settings > Environment Variables**, add your production secrets:
+   - `CLEANVERSE_BASE_URL`
+   - `CLEANVERSE_API_ID`
+   - `CLEANVERSE_API_KEY_BASE64`
+   - `DEPLOYER_PRIVATE_KEY`
+   - `MONAD_RPC_URL`
+   - `CHAIN_ID`
+4. Click **Deploy Site**.
+
