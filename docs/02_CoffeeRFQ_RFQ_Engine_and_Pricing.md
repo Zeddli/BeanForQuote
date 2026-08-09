@@ -47,63 +47,65 @@ sequenceDiagram
     MakerC->>RFQEngine: submitQuote(price, expiry)
     Buyer->>RFQEngine: acceptQuote(quoteId)
     RFQEngine->>RuleEngine: checkCompliant(buyer, maker, lotId)
+    RuleEngine->>CleanverseCVIAdapter: hasRole() & !isFrozen() (Direct EVM Call)
+    CleanverseCVIAdapter-->>RuleEngine: true
     RuleEngine-->>RFQEngine: pass
     RFQEngine->>SettlementEngine: executeTrade(quoteId)
     SettlementEngine->>CoffeeLotToken: transfer(maker -> buyer)
-    CoffeeLotToken->>RuleEngine: checkCompliant (second check)
-    RuleEngine-->>CoffeeLotToken: pass
+    SettlementEngine->>CleanverseWrappedAUSDC: transfer(buyer -> maker)
     SettlementEngine->>AuditLog: recordTrade(tradeId, travelRuleData)
 ```
 
 ---
 
-## Quote validity and expiry handling
+## Compliance Gating Architecture (Option A Implemented)
 
-- Each quote carries an `expiry` timestamp set by the maker at submission (30–60 seconds out, matching how live RFQ networks operate elsewhere in DeFi).
-- `acceptQuote()` reverts if `block.timestamp > quote.expiry` — an expired quote cannot be accepted even if it's still the best price on record.
-- If the buyer's accept transaction lands after expiry due to network delay, the revert is the correct behavior, not a bug — this mirrors the "last look" tension inherent to RFQ systems generally, and is worth naming explicitly in the demo rather than treating as an edge case to hide.
-- If no quotes are received before the RFQ's own (longer) expiry, the RFQ simply lapses to `Expired` — no special handling needed beyond a state check.
+Compliance gating uses **Option A: Direct On-Chain EVM Reads** against `CleanverseCVIAdapter.sol` deployed at `0x1c5fa313efc3868e0396532f92c163c02c148d6d` on Monad Testnet.
+
+- `acceptQuote()` invokes `RuleEngine.checkCompliant(buyer, maker, lotId)`.
+- `RuleEngine` queries `cvi.hasRole()` and `!cvi.isFrozen()` synchronously during the transaction execution.
+- If a counterparty is frozen or lacks the required CVI role, the transaction reverts synchronously with `NotAuthorized()`, `LotFrozen()`, or `NonCompliant()`.
 
 ---
 
-## Pricing model for market maker bots
+## Pricing model for market maker bots (Fixed Direction)
 
-The hackathon demo does not need production-grade pricing — it needs pricing that's *legible*, so judges can see the mechanism working. A simple inventory-skew model:
+Market maker bots compute competitive quotes based on standard commodity inventory-skew economics:
 
 ```
-quotedPrice = referencePrice × (1 + baseSpread + inventorySkew)
-
-inventorySkew = (requestedQuantity / makerInventory) × skewFactor
+P_quote = RefPrice × (1 + BaseSpread) × (1 + SkewFactor × (TargetInventory − CurrentInventory) / TargetInventory)
 ```
 
-- `referencePrice` — a hardcoded or lightly-randomized reference price per bot, standing in for a real commodity price feed
-- `baseSpread` — a fixed markup (e.g. 1–2%) representing the maker's margin
-- `inventorySkew` — grows as the requested quantity approaches a larger share of the maker's simulated inventory, so a bot quoting against most of its holdings prices less aggressively than one with ample inventory
-
-Running 2–3 bots with different `referencePrice`, `baseSpread`, and simulated inventory levels is enough to produce genuinely different quotes per RFQ — which is what makes "best quote selected" a real selection rather than a scripted outcome.
-
----
-
-## Best-quote selection logic
-
-- The buyer is shown all non-expired quotes ranked by price (lowest ask wins, since the buyer is purchasing).
-- Selection is manual in the demo — the buyer clicks "accept" on a specific quote — rather than auto-accepting the lowest price, since a real buyer might weigh maker reputation or fill reliability. Auto-accept-lowest is a reasonable v2 feature to mention but not build.
+### Economic Behavior & Sign Dynamics:
+- **High Inventory (`CurrentInventory > TargetInventory`):** Skew term is negative $\rightarrow$ Maker quotes **lower / cheaper** to incentivize buyers and unload excess warehouse stock (e.g. Market Maker Beta @ $7.90/kg vs $8.15/kg baseline).
+- **Balanced Inventory (`CurrentInventory == TargetInventory`):** Skew term is 0 $\rightarrow$ Maker quotes baseline market price (e.g. Market Maker Alpha @ $8.15/kg).
+- **Low Inventory (`CurrentInventory < TargetInventory`):** Skew term is positive $\rightarrow$ Maker quotes **higher / premium** to conserve remaining stock (e.g. Market Maker Gamma @ $8.45/kg).
 
 ---
 
-## Edge cases worth handling explicitly
+## Multi-Factor Quote Selection Logic
 
-| Case | Handling |
-|---|---|
-| No quotes received before RFQ expiry | RFQ transitions to `Expired`, no trade occurs |
-| Quote expires before buyer accepts | `acceptQuote()` reverts; buyer must pick a different (still-valid) quote |
-| Two makers submit near-identical prices | No special tie-break needed — buyer picks manually |
-| Lot gets frozen by Regulator mid-RFQ | `submitQuote()` and `acceptQuote()` both check `RuleEngine` state and revert if frozen |
-| Buyer tries to accept a quote for someone else's RFQ | `acceptQuote()` checks `msg.sender == rfq.buyer`, reverts otherwise |
-| Maker submits a quote below their simulated inventory but above requested quantity | Out of scope for the hackathon demo — no partial-fill logic; quotes are all-or-nothing on the full requested quantity |
+Selection in the demo is manual — the buyer weighs multiple quantitative factors alongside price:
+1. **Quoted Unit Price ($/kg and $/lb)**
+2. **Historical Settlement Fill Rate (%)** (e.g., Maker Beta: 99.6% vs Maker Gamma: 95.5%)
+3. **Execution Latency (Seconds)** (e.g., Maker Beta: 0.8s vs Maker Gamma: 2.5s)
+4. **Inventory Rationale & Expiry Countdown**
 
 ---
 
-## What's deliberately out of scope
+## Edge Cases Demonstrated Live
 
-Real price-feed integration, partial fills, quote cancellation before expiry, and maker reputation scoring are all reasonable production features that add complexity without adding to the "depth of integration" story judges are scoring. Naming them here as acknowledged-but-cut is stronger than building a half version of any of them.
+| Scenario | Expected Behavior | Live Demo Trigger |
+|---|---|---|
+| Quote expires before buyer accepts | `acceptQuote()` reverts; UI greys out quote | `[ ⏱ Expire Quote ]` in simulation drawer |
+| Lot / Wallet frozen mid-RFQ (Regulator action) | `submitQuote()` and `acceptQuote()` revert with `LotFrozen() / NonCompliant()` | `[ 🔴 Simulate Frozen Wallet ]` in simulation drawer |
+| Buyer accepts another buyer's quote | `acceptQuote()` checks `msg.sender == rfq.buyer`, reverts | Enforced natively by smart contract |
+| No quotes received | RFQ lapses to `Expired` | Expiry countdown timer reaches 0 |
+
+---
+
+## What's Real vs. Simulated
+
+- **Real:** AUSDC balances and transfers on Monad Testnet (`0x534b2f3A21130d7a60830c2Df862319e593943A3`), `CleanverseCVIAdapter` role checks (`0x1c5f...8d6d`), on-chain RFQ state transitions, atomic DvP settlement, and TR-88391 audit log records.
+- **Simulated:** Warehouse inventory numbers (`15,000 kg`, `8,000 kg`) — demo-seeded parameters for bot pricing algorithms.
+- **Deliberately Out of Scope:** Partial-fill executions (all-or-nothing on full lot size) and market maker self-registration.

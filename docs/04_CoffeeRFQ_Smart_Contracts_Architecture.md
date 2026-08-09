@@ -40,23 +40,23 @@ flowchart LR
 
 ---
 
-## External interfaces (assumed shape)
+## External interfaces & Monad Testnet Deployed Address Suite
 
-Cleanverse's CVI and CVA are treated as external systems, not reimplemented. No public API/SDK spec exists yet, so this is the *shape* to design against, swapped for real signatures once sandbox docs are available:
+Cleanverse CVI is integrated via **Option A: Direct EVM On-Chain Calls** against `CleanverseCVIAdapter.sol` (`0x1c5fa313efc3868e0396532f92c163c02c148d6d`) deployed on Monad Testnet.
 
-```
-ICleanverseCVI {
-  hasRole(address wallet, bytes32 role) returns (bool)
-  isFrozen(address wallet) returns (bool)
+```solidity
+interface ICleanverseCVI {
+    function hasRole(address wallet, bytes32 role) external view returns (bool);
+    function isFrozen(address wallet) external view returns (bool);
 }
 
-ICleanverseCVA {
-  wrapAsset(bytes32 lotId, uint256 amount, bytes metadata) returns (uint256 tokenId)
-  isTransferEligible(address from, address to, uint256 tokenId) returns (bool)
+interface ICleanverseCVA {
+    function wrapAsset(bytes32 lotId, uint256 amount, bytes calldata metadata) external returns (uint256 tokenId);
+    function isTransferEligible(address from, address to, uint256 tokenId) external view returns (bool);
 }
 ```
 
-Every contract that gates by role calls `ICleanverseCVI.hasRole()` rather than keeping its own role table — CVI stays the single source of truth for identity.
+Every contract that gates by role calls `ICleanverseCVI.hasRole()` synchronously during transaction execution — CVI stays the single source of truth for identity on Monad Testnet.
 
 ---
 
