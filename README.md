@@ -1,4 +1,4 @@
-# BeanForQuote (CoffeeRFQ)
+# ☕ BeanForQuote (CoffeeRFQ)
 
 **Compliant Price Discovery & RFQ Settlement Layer for Tokenized Physical Commodity RWAs on Monad**
 
@@ -6,28 +6,93 @@
 
 ---
 
-## ☕ Overview
+## ☕ Project Summary
 
-**BeanForQuote (CoffeeRFQ)** is an RFQ-based settlement layer for tokenized coffee lots deployed on **Monad Testnet**. Verified exporters and roasters trade CVA-wrapped commodity tokens (`cvCOFFEE`) against signed, time-boxed quotes from verified market makers — replacing illiquid AMM bonding curves with compliant, OTC-style physical commodity pricing.
+**BeanForQuote (CoffeeRFQ)** is an institutional Request-for-Quote (RFQ) and settlement workspace for tokenized real-world physical commodity lots (coffee) deployed on **Monad Testnet** (Chain ID `10143`).
+
+Instead of relying on illiquid AMM bonding curves that suffer from high slippage and lack regulatory oversight for long-tail commodities, BeanForQuote connects **Cleanverse CVI A-Pass verified exporters and roasters** directly with **accredited market makers**. 
+
+Trades are quoted via multi-factor pricing (cupping score, physical warehouse receipts, lot scarcity, settlement latency), cleared pre-trade through **Cleanverse CCP Validator Pools**, settled atomically in **Cleanverse Access USDC (AUSDC)**, and recorded to **`AuditLog.sol`** with FATF Travel Rule cryptographic audit packages.
 
 ---
 
-## 🛡 Cleanverse Settlement & Permission Architecture
+## 🚨 The Problem
 
-Cleanverse identity verification is integrated natively across the settlement engine and token contracts:
+![Problem Statement](docs/Problem%20Statement.png)
 
-| Role | SubGroup | Touches Payment Leg? | A-Pass Mechanically Required? | Architectural Rationale |
-|---|---|---|---|---|
-| **Buyer** | `BY` | **Yes** (Sends `cvUSDC`) | **Yes (Forced)** | Cleanverse A-Token contract natively checks sender A-Pass prior to transfer |
-| **Market Maker** | `MM` | **Yes** (Receives `cvUSDC`) | **Yes (Forced)** | Cleanverse A-Token contract natively checks receiver A-Pass prior to transfer |
-| **Exporter** | `EX` | **No** (Receives `cvCOFFEE`) | Model Consistency | Gated for lot minting & supply-chain provenance accountability |
-| **Quality Inspector** | `QI` | **No** (Attestation signature) | Model Consistency | Gated via `AttestationRegistry` for certified cupping signatures |
-| **Custodian** | `CU` | **No** (Status update) | Model Consistency | Gated via `CustodyRegistry` for physical warehouse custody tracking |
-| **Regulator / Auditor** | `RG`/`AU` | **No** (Read/Rule enforce) | Model Consistency | Governance-granted permission for lot freeze & Travel Rule inspection |
+Global physical coffee trading represents over **$200B in annual volume**, yet the supply chain remains plagued by manual friction:
+- **Shallow AMMs fail physical RWAs:** Standard AMM liquidity pools cause severe price impact on high-value, long-tail physical commodities.
+- **Opacity & Counterparty Risk:** Buyers lack real-time visibility into physical warehouse custody and quality attestation.
+- **Compliance Friction:** Traditional cross-border commodity settlement takes 3–5 business days with heavy correspondent banking fees and manual KYC/Travel Rule reporting.
 
-> **Mechanical Enforcement:** The payment leg of every trade moves through a Cleanverse-wrapped A-Token (`cvUSDC`). That token's smart contract enforces transfer eligibility natively — any wallet sending (Buyer) or receiving (Market Maker) payment needs an active, non-frozen Cleanverse A-Pass on-chain.
->
-> *For detailed architecture specifications, see [`docs/08_Cleanverse_Settlement_Architecture.md`](file:///home/zhijian/beanforquote/docs/08_Cleanverse_Settlement_Architecture.md).*
+---
+
+## 🏛️ System Architecture
+
+![Architecture](docs/Architecture.png)
+
+The BeanForQuote architecture consists of 5 tightly integrated subsystem blocks:
+
+1. **💻 Client Layer (Next.js 15 Frontend):** Role switcher (`Buyer` / `Exporter`), Dynamic RFQ Request Builder, Quote Competition Board, Settlement Desk, and Audit History Viewer.
+2. **🛡️ Cleanverse Protocol Gateway:** A-Pass Identity Gateway (`/query_apass`), Institution Faucet API (`/faucet`), and Validator Pool Compliance (`/validator/verify`).
+3. **👛 Web3 Wallet Extension:** MetaMask, Phantom, and Rabby support for EIP-191 payload signatures and Monad Testnet transaction signing.
+4. **⚡ Monad Testnet Smart Contracts (Chain ID 10143):** 10 deployed EVM contracts managing identity, warehouse receipts, multi-factor quotes, rule enforcement, and atomic settlement.
+5. **🤖 Market Maker Quoting Service:** Automated liquidity bots listening to on-chain RFQ attestation events and generating multi-factor competitive pricing.
+
+---
+
+## 🔄 End-to-End Sequence Flow
+
+![End-to-End Sequence Flow](docs/End-to-End%20Sequence%20Flow.png)
+
+### The 3 Trade Execution Phases
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Buyer as 🛒 Buyer (Nordlicht)
+    participant Cleanverse as 🛡️ Cleanverse API
+    participant Wallet as 👛 Web3 Wallet
+    participant Monad as ⚡ Monad Testnet
+    participant MM as 🤖 Market Maker Bots
+
+    rect rgb(240, 248, 255)
+        note over Buyer, Monad: Phase 1 — User Authorization & Cleanverse CVI Setup
+        Buyer->>Cleanverse: Query A-Pass & Role Verification (Tier 9 Buyer)
+        Cleanverse->>Monad: Verify BUYER_ROLE on CleanverseCviAdapter.sol (0x1c5f...)
+        Buyer->>Cleanverse: Request Faucet (10 AUSDC + 0.05 MON Gas)
+    end
+
+    rect rgb(255, 250, 240)
+        note over Buyer, MM: Phase 2 — Monad On-Chain RFQ Broadcast & Market Competition
+        Buyer->>Wallet: Build RFQ (480 kg, SG) & Sign Attestation
+        Wallet->>Monad: Broadcast RFQ to AttestationRegistry.sol (0xf76a...)
+        MM->>Monad: Listen to Event & Verify Santos Vault Custody
+        MM-->>Buyer: Stream Competitive Quotes (MM Alpha @ $8.20/kg)
+    end
+
+    rect rgb(245, 255, 250)
+        note over Buyer, Monad: Phase 3 — Cleanverse CCP Compliance & Web3 AUSDC Settlement
+        Buyer->>Cleanverse: Validate Buyer against CCP Validator Pool (/validator/verify)
+        Buyer->>Wallet: Prompt ERC-20 Transfer (3,936 AUSDC on 0xaC08...)
+        Wallet->>Monad: Execute DvP Atomic Trade Settlement & Write AuditLog.sol (0xd169...)
+        Monad-->>Buyer: Return Monadscan Receipt & Downloadable Audit JSON Package
+    end
+```
+
+---
+
+## 🛡️ Detailed Cleanverse Integration
+
+Cleanverse identity and payment rules are mechanics-driven throughout the trade lifecycle:
+
+| Module | Implementation | Contract / Endpoint | Purpose |
+|---|---|---|---|
+| **Cleanverse CVI** | Verified Identity | `CleanverseCviAdapter.sol` (`0x1c5f...`) | Enforces `hasRole` permissions and checks freeze status on-chain. |
+| **Cleanverse CVA** | Access USDC Token | `Cleanverse Access USDC` (`0xaC08...`) | Payment token (`AUSDC`, 6 decimals) used for all trade settlement transfers. |
+| **Cleanverse Faucet** | Corporate Faucet API | `POST /faucet` | Dispatches 10 AUSDC testnet tokens and 0.05 MON native gas to registered wallets. |
+| **Cleanverse CCP** | Validator Compliance | `POST /validator/verify` | Real-time Central Counterparty (CCP) validator check verifying A-Pass and Travel Rule status. |
+| **Travel Rule Audit** | Cryptographic Export | `AuditLog.sol` (`0xd169...`) | Stores immutable post-trade records containing Travel Rule reference hashes (`TR-88391`). |
 
 ---
 
@@ -37,10 +102,11 @@ All contracts are deployed, initialized, and linked live on the Monad Testnet:
 
 | Contract | Address | Description |
 |---|---|---|
-| **`CleanverseCVIAdapter`** | [`0x1c5fa313efc3868e0396532f92c163c02c148d6d`](https://testnet.monadscan.com/address/0x1c5fa313efc3868e0396532f92c163c02c148d6d) | CVI adapter verifying Cleanverse A-Pass NFT on-chain ownership (`0xbA82...`) & role gating |
+| **`CleanverseCviAdapter`** | [`0x1c5fa313efc3868e0396532f92c163c02c148d6d`](https://testnet.monadscan.com/address/0x1c5fa313efc3868e0396532f92c163c02c148d6d) | CVI adapter verifying Cleanverse A-Pass NFT on-chain ownership & role gating |
+| **`Cleanverse Access USDC (AUSDC)`** | [`0xaC0893567D43C3E7e6e35a72803df05416C1f20D`](https://testnet.monadscan.com/address/0xaC0893567D43C3E7e6e35a72803df05416C1f20D) | Cleanverse Access USDC ERC-20 payment token used for trade settlement |
 | **`MockCleanverseCVA`** | [`0xcfb4dd97d787c8818247ff4a77fe31208abfdc3a`](https://testnet.monadscan.com/address/0xcfb4dd97d787c8818247ff4a77fe31208abfdc3a) | CVA wrapper managing compliant asset tokenization & transfer eligibility checks |
-| **`AttestationRegistry`** | [`0xf76a2decdd3dca42c6f95d5c3148c6e2accd42c4`](https://testnet.monadscan.com/address/0xf76a2decdd3dca42c6f95d5c3148c6e2accd42c4) | On-chain registry storing Quality Inspector cupping & grade attestations |
-| **`CustodyRegistry`** | [`0x7bd85132c3befaefca9b4b870073453714dfa362`](https://testnet.monadscan.com/address/0x7bd85132c3befaefca9b4b870073453714dfa362) | On-chain registry tracking physical custody transitions per coffee lot |
+| **`AttestationRegistry`** | [`0xf76a2decdd3dca42c6f95d5c3148c6e2accd42c4`](https://testnet.monadscan.com/address/0xf76a2decdd3dca42c6f95d5c3148c6e2accd42c4) | On-chain registry storing RFQ broadcasts, cupping, and grade attestations |
+| **`CustodyRegistry`** | [`0x7bd85132c3befaefca9b4b870073453714dfa362`](https://testnet.monadscan.com/address/0x7bd85132c3befaefca9b4b870073453714dfa362) | On-chain registry tracking physical custody transitions per coffee lot (Santos Vault) |
 | **`RuleEngine`** | [`0x157209a3bc4100723e0d302f6163f1ec410bae66`](https://testnet.monadscan.com/address/0x157209a3bc4100723e0d302f6163f1ec410bae66) | Regulator jurisdiction rules, wallet flags, and lot freeze enforcement |
 | **`CoffeeLotToken`** | [`0xab06536d0f182db3c54f6e1d7503d5ddd489dc84`](https://testnet.monadscan.com/address/0xab06536d0f182db3c54f6e1d7503d5ddd489dc84) | CVA-wrapped coffee lot token with metadata & dual-checkpoint compliance checks |
 | **`AuditLog`** | [`0xd169c004f7a20fdba82dafd15c3e2c080f3b92a8`](https://testnet.monadscan.com/address/0xd169c004f7a20fdba82dafd15c3e2c080f3b92a8) | Immutable trade settlement history with Travel Rule data recording |
@@ -73,28 +139,87 @@ All demo participant wallets are pre-registered on-chain via Cleanverse `POST /g
 - **Chain ID:** `10143`
 - **RPC URL:** `https://testnet-rpc.monad.xyz`
 - **Block Explorer:** `https://testnet.monadscan.com`
+- **Cleanverse Access USDC Contract:** `0xaC0893567D43C3E7e6e35a72803df05416C1f20D`
 - **Cleanverse A-Pass NFT Contract:** `0xbA82D189540CaC9DC6FF46B6837CaC1BFdEC58B9`
 
 ---
 
-## 🛠️ Verification & Development
+## 💻 Installation & Local Setup
 
-### 1. Smart Contract Unit Tests (Foundry)
+### Prerequisites
+- **Node.js:** `v20.x` or higher
+- **Package Manager:** `npm` or `yarn` / `pnpm`
+- **Foundry (Optional for contract development):** `forge` & `cast` CLI
+
+---
+
+### Step 1: Clone Repository & Install Dependencies
+
+```bash
+git clone https://github.com/Zeddli/BeanForQuote.git
+cd BeanForQuote
+
+# Install frontend dependencies
+cd bfq-frontend
+npm install
+```
+
+---
+
+### Step 2: Configure Environment Variables
+
+Create `.env` inside `bfq-frontend/`:
+
+```env
+CLEANVERSE_BASE_URL=https://uatapi.cleanverse.com/api/cooperate
+CLEANVERSE_API_ID=your_cleanverse_api_id
+CLEANVERSE_API_KEY_BASE64=your_cleanverse_api_key_base64
+
+# Deployer wallet private key for forge broadcast / relayer
+DEPLOYER_PRIVATE_KEY=0xYOUR_PRIVATE_KEY
+
+# Monad network
+MONAD_RPC_URL=https://testnet-rpc.monad.xyz
+CHAIN_NAME=monad
+CHAIN_ID=10143
+```
+
+---
+
+### Step 3: Launch Frontend Web Application
+
+```bash
+cd bfq-frontend
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000) in your browser.
+
+---
+
+### Step 4: Run Market Maker Bot Daemon (Optional)
+
+In a separate terminal window, launch the automated market maker bot to stream live competitive quotes for broadcast RFQs:
+
+```bash
+node bots/market-maker-bot.js
+```
+
+---
+
+### Step 5: Run Smart Contract Unit Tests (Foundry)
+
 ```bash
 cd contracts
 forge test
 ```
 
-### 2. Verify On-Chain Roles (Cast CLI)
+---
+
+### Step 6: Verify On-Chain Roles via Cast CLI
+
 ```bash
-# Check if Exporter wallet has EXPORTER_ROLE on Monad Testnet
-cast call 0x1c5fa313efc3868e0396532f92c163c02c148d6d "hasRole(address,bytes32)(bool)" 0xD06178216134c059BF17c4D3dD60CCD36074edfd $(cast keccak "EXPORTER_ROLE") --rpc-url https://testnet-rpc.monad.xyz
+# Query if Buyer wallet has BUYER_ROLE on Monad Testnet
+cast call 0x1c5fa313efc3868e0396532f92c163c02c148d6d "hasRole(address,bytes32)(bool)" 0x9703f29Ab27a1D72502cfeDFc739d26aA41abF88 $(cast keccak "BUYER_ROLE") --rpc-url https://testnet-rpc.monad.xyz
 # Returns: true
 ```
-
-### 3. Frontend Web Application (Next.js)
-```bash
-cd bfq-frontend
-npm run dev
-```
-Open [http://localhost:3000](http://localhost:3000) to view the multi-role settlement interface.
