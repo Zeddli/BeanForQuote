@@ -1,0 +1,17 @@
+# Dependencies & Build
+node_modules/
+.next/
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+*.tsbuildinfo
+
+# Secrets & Local State
+.env
+.env.local
+bfq-frontend/.env
+bfq-frontend/.role-registrations.json
+contracts/.env
+
+# OS
+.DS_Store
